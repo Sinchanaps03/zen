@@ -20,7 +20,52 @@ import {
   Zap,
   Leaf
 } from "lucide-react";
-import { useState, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { BreatheTimer } from "./components/BreatheTimer";
+import { KintsugiJournal } from "./components/KintsugiJournal";
+
+type Instrument = {
+  id: number;
+  name: string;
+  category: string;
+  frequency_hz: number | null;
+  mood: string | null;
+  audio_url: string | null;
+  image_url: string | null;
+  description: string | null;
+};
+
+type EmotionalState = {
+  key: string;
+  label: string;
+  fromThought: string;
+  toRitual: string;
+  targetFrequency: number;
+};
+
+const EMOTIONAL_STATES: EmotionalState[] = [
+  {
+    key: "heavy",
+    label: "Heavy",
+    fromThought: "I feel stuck in repetitive, heavy thoughts.",
+    toRitual: "Use a cleansing resonance to release emotional weight.",
+    targetFrequency: 528,
+  },
+  {
+    key: "anxious",
+    label: "Anxious",
+    fromThought: "My mind is racing and I cannot settle.",
+    toRitual: "Slow breathing with grounded lower harmonics.",
+    targetFrequency: 432,
+  },
+  {
+    key: "disconnected",
+    label: "Disconnected",
+    fromThought: "I feel disconnected from purpose and self.",
+    toRitual: "Re-tune through melodic focus and gentle attention.",
+    targetFrequency: 417,
+  },
+];
 
 const TeamMember = ({ name, role, image }: { name: string; role: string; image: string }) => (
   <motion.div 
@@ -55,7 +100,16 @@ const GalleryItem = ({ src, alt, className = "" }: { src: string; alt: string; c
 
 export default function App() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [instruments, setInstruments] = useState<Instrument[]>([]);
+  const [isLoadingInstruments, setIsLoadingInstruments] = useState(true);
+  const [instrumentError, setInstrumentError] = useState<string | null>(null);
+  const [selectedEmotion, setSelectedEmotion] = useState<string>("heavy");
+  const [isRagaPlaying, setIsRagaPlaying] = useState(false);
+  const [currentAudioUrl, setCurrentAudioUrl] = useState<string | null>(null);
+  const [currentAudioLabel, setCurrentAudioLabel] = useState<string | null>(null);
   const heroRef = useRef(null);
+  const ragaAudioRef = useRef<HTMLAudioElement | null>(null);
+  const instrumentAudioRef = useRef<HTMLAudioElement | null>(null);
   const { scrollYProgress } = useScroll({
     target: heroRef,
     offset: ["start start", "end start"]
@@ -63,6 +117,100 @@ export default function App() {
 
   const y = useTransform(scrollYProgress, [0, 1], ["0%", "50%"]);
   const opacity = useTransform(scrollYProgress, [0, 0.8], [1, 0]);
+
+  const selectedEmotionalState = useMemo(
+    () => EMOTIONAL_STATES.find((state) => state.key === selectedEmotion) ?? EMOTIONAL_STATES[0],
+    [selectedEmotion],
+  );
+
+  const recommendedInstrument = useMemo(() => {
+    if (instruments.length === 0) {
+      return null;
+    }
+
+    const withFrequency = instruments.filter((item) => typeof item.frequency_hz === "number");
+    if (withFrequency.length === 0) {
+      return instruments[0];
+    }
+
+    return withFrequency.reduce((closest, current) => {
+      const currentGap = Math.abs((current.frequency_hz ?? 0) - selectedEmotionalState.targetFrequency);
+      const closestGap = Math.abs((closest.frequency_hz ?? 0) - selectedEmotionalState.targetFrequency);
+      return currentGap < closestGap ? current : closest;
+    });
+  }, [instruments, selectedEmotionalState.targetFrequency]);
+
+  useEffect(() => {
+    async function loadInstruments() {
+      try {
+        setIsLoadingInstruments(true);
+        const response = await fetch('/api/instruments?limit=12');
+        if (!response.ok) {
+          throw new Error('Could not load instruments');
+        }
+        const data = (await response.json()) as Instrument[];
+        setInstruments(data);
+      } catch (error) {
+        setInstrumentError('Could not connect to the Zen instrument database. Start the API and PostgreSQL containers.');
+      } finally {
+        setIsLoadingInstruments(false);
+      }
+    }
+
+    void loadInstruments();
+  }, []);
+
+  async function handleMorningRaga() {
+    if (!ragaAudioRef.current) {
+      ragaAudioRef.current = new Audio("/audio/morning-raga-432hz.mp3");
+      ragaAudioRef.current.loop = true;
+    }
+
+    if (isRagaPlaying) {
+      ragaAudioRef.current.pause();
+      setIsRagaPlaying(false);
+      return;
+    }
+
+    try {
+      await ragaAudioRef.current.play();
+      setIsRagaPlaying(true);
+    } catch {
+      try {
+        ragaAudioRef.current.src = "https://cdn.pixabay.com/audio/2023/10/10/audio_95a8f45044.mp3";
+        await ragaAudioRef.current.play();
+        setIsRagaPlaying(true);
+      } catch {
+        setIsRagaPlaying(false);
+      }
+    }
+  }
+
+  async function toggleInstrumentAudio(url: string, label: string) {
+    if (!instrumentAudioRef.current) {
+      instrumentAudioRef.current = new Audio(url);
+    }
+
+    const audio = instrumentAudioRef.current;
+
+    if (currentAudioUrl === url && !audio.paused) {
+      audio.pause();
+      setCurrentAudioUrl(null);
+      setCurrentAudioLabel(null);
+      return;
+    }
+
+    try {
+      audio.pause();
+      audio.src = url;
+      await audio.play();
+      setCurrentAudioUrl(url);
+      setCurrentAudioLabel(label);
+    } catch {
+      setCurrentAudioUrl(null);
+      setCurrentAudioLabel(null);
+    }
+  }
 
   return (
     <div className="min-h-screen selection:bg-zen-vermilion selection:text-white">
@@ -76,6 +224,7 @@ export default function App() {
         <div className="hidden md:flex space-x-12 text-sm uppercase tracking-[0.2em] font-medium">
           <a href="#about" className="hover:text-zen-vermilion transition-colors">About</a>
           <a href="#frequency" className="hover:text-zen-vermilion transition-colors">Frequency</a>
+          <a href="#instruments" className="hover:text-zen-vermilion transition-colors">Instruments</a>
           <a href="#gallery" className="hover:text-zen-vermilion transition-colors">Gallery</a>
           <a href="#contact" className="hover:text-zen-vermilion transition-colors">Contact</a>
         </div>
@@ -118,6 +267,9 @@ export default function App() {
           <p className="max-w-xl mx-auto text-lg md:text-xl font-light opacity-70 mb-12 leading-relaxed">
             Immerse yourself in the sacred resonance of ancient instruments and modern high-frequency soundscapes.
           </p>
+          <div className="flex justify-center mb-10">
+            <BreatheTimer />
+          </div>
           <motion.a 
             href="#about"
             whileHover={{ scale: 1.05 }}
@@ -201,6 +353,8 @@ export default function App() {
         </div>
       </section>
 
+      <KintsugiJournal />
+
       {/* Features Section */}
       <section id="frequency" className="py-32 bg-white">
         <div className="max-w-7xl mx-auto px-6">
@@ -220,23 +374,191 @@ export default function App() {
               { icon: <Leaf />, title: "Nature Synthesis", desc: "Real-time environmental sounds captured from remote Japanese forests and shrines." },
               { icon: <Heart />, title: "Heart Resonance", desc: "Focus on the 528Hz frequency to encourage cellular repair and emotional balance." },
               { icon: <Sun />, title: "Morning Ragas", desc: "Energizing high-frequency compositions to start your day with divine intention." }
-            ].map((feature, i) => (
+            ].map((feature, i) => {
+              const isMorningRagas = feature.title === "Morning Ragas";
+              return (
               <motion.div 
                 key={i}
                 initial={{ opacity: 0, y: 20 }}
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
                 transition={{ delay: i * 0.1 }}
-                className="flex flex-col items-center text-center group"
+                className={`flex flex-col items-center text-center group ${isMorningRagas ? "cursor-pointer" : ""}`}
+                onClick={isMorningRagas ? handleMorningRaga : undefined}
+                role={isMorningRagas ? "button" : undefined}
+                tabIndex={isMorningRagas ? 0 : undefined}
+                onKeyDown={
+                  isMorningRagas
+                    ? (event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          void handleMorningRaga();
+                        }
+                      }
+                    : undefined
+                }
               >
                 <div className="mb-6 p-5 rounded-2xl bg-zen-paper text-zen-ink group-hover:bg-zen-vermilion group-hover:text-white transition-all duration-500">
                   {feature.icon}
                 </div>
                 <h3 className="serif text-2xl mb-3">{feature.title}</h3>
                 <p className="text-sm text-zen-ink/60 leading-relaxed">{feature.desc}</p>
+                {isMorningRagas && (
+                  <p className="text-[10px] uppercase tracking-widest mt-4 text-zen-vermilion font-bold">
+                    {isRagaPlaying ? "Playing 432Hz Drone" : "Click To Play 432Hz Drone"}
+                  </p>
+                )}
               </motion.div>
-            ))}
+            );})}
           </div>
+        </div>
+      </section>
+
+      {/* CBT + Ritual Transition */}
+      <section id="ritual" className="py-32 px-6">
+        <motion.div
+          animate={{
+            backgroundColor: selectedEmotion ? "#F5F2ED" : "#1A1A1A",
+            color: selectedEmotion ? "#1A1A1A" : "#F5F2ED",
+          }}
+          transition={{ duration: 0.6, ease: "easeOut" }}
+          className="max-w-7xl mx-auto rounded-[2.5rem] p-10 md:p-14 border border-zen-ink/10"
+        >
+          <span className="text-zen-vermilion text-xs uppercase tracking-[0.3em] font-bold mb-4 block">Polishing The Mirror</span>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
+            <div>
+              <h2 className="serif text-4xl md:text-5xl mb-4">Frequency Check</h2>
+              <p className="text-sm md:text-base opacity-70 leading-relaxed mb-8">
+                Name the thought state first, then shift to a ritual sound recommendation from the Zen database.
+              </p>
+
+              <div className="flex flex-wrap gap-3 mb-8">
+                {EMOTIONAL_STATES.map((state) => (
+                  <button
+                    key={state.key}
+                    onClick={() => setSelectedEmotion(state.key)}
+                    className={`px-5 py-3 rounded-full text-xs uppercase tracking-widest font-bold transition-all ${
+                      selectedEmotion === state.key
+                        ? "bg-zen-vermilion text-white"
+                        : "bg-white text-zen-ink border border-zen-ink/10"
+                    }`}
+                  >
+                    {state.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="space-y-4 text-sm leading-relaxed">
+                <p>
+                  <span className="font-bold uppercase tracking-widest text-[10px] block mb-1 opacity-50">Thought Pattern</span>
+                  {selectedEmotionalState.fromThought}
+                </p>
+                <p>
+                  <span className="font-bold uppercase tracking-widest text-[10px] block mb-1 opacity-50">Ritual Shift</span>
+                  {selectedEmotionalState.toRitual}
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-3xl border border-zen-ink/10 p-8">
+              <p className="text-[10px] uppercase tracking-[0.3em] opacity-40 mb-3">Suggested Re-Tune</p>
+              {isLoadingInstruments && <p className="text-sm opacity-70">Seeking resonance...</p>}
+              {!isLoadingInstruments && instrumentError && (
+                <p className="text-sm text-red-700">Database offline. Start API + PostgreSQL to receive live ritual suggestions.</p>
+              )}
+              {!isLoadingInstruments && !instrumentError && recommendedInstrument && (
+                <div>
+                  <h3 className="serif text-3xl mb-2">{recommendedInstrument.name}</h3>
+                  <p className="text-sm opacity-70 mb-5">{recommendedInstrument.description || "No description available."}</p>
+                  <div className="flex items-center justify-between text-xs uppercase tracking-widest opacity-60 mb-6">
+                    <span>{recommendedInstrument.frequency_hz ? `${recommendedInstrument.frequency_hz} Hz` : "N/A"}</span>
+                    <span>{recommendedInstrument.mood || "Open"}</span>
+                  </div>
+                  {recommendedInstrument.audio_url ? (
+                    <a
+                      href={recommendedInstrument.audio_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-2 text-xs uppercase tracking-widest font-bold hover:text-zen-vermilion"
+                    >
+                      <Play size={14} />
+                      Begin Audio Ritual
+                    </a>
+                  ) : null}
+                </div>
+              )}
+            </div>
+          </div>
+        </motion.div>
+      </section>
+
+      {/* Instruments From Database */}
+      <section id="instruments" className="py-32 px-6 bg-zen-paper/50">
+        <div className="max-w-7xl mx-auto">
+          <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-8 mb-12">
+            <div>
+              <span className="text-zen-vermilion text-xs uppercase tracking-[0.3em] font-bold mb-4 block">Live SQL Data</span>
+              <h2 className="serif text-5xl md:text-6xl leading-tight">Zen Instrument Library</h2>
+            </div>
+            <p className="text-zen-ink/60 max-w-xl">
+              This section is fetched from PostgreSQL through the Express API, so each card is database-driven.
+            </p>
+          </div>
+
+          {currentAudioLabel && (
+            <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-zen-ink/10 bg-white px-4 py-2 text-[10px] uppercase tracking-widest font-bold text-zen-ink/70">
+              <Play size={12} /> Now Playing: {currentAudioLabel}
+            </div>
+          )}
+
+          {isLoadingInstruments && (
+            <div className="text-sm uppercase tracking-widest text-zen-ink/40">Loading instruments...</div>
+          )}
+
+          {!isLoadingInstruments && instrumentError && (
+            <div className="rounded-2xl border border-red-300 bg-red-50 text-red-700 px-6 py-4 text-sm">
+              {instrumentError}
+            </div>
+          )}
+
+          {!isLoadingInstruments && !instrumentError && (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {instruments.map((instrument) => (
+                <article key={instrument.id} className="bg-white rounded-3xl border border-zen-ink/10 overflow-hidden">
+                  <div className="h-48 bg-zen-ink/5">
+                    {instrument.image_url ? (
+                      <img
+                        src={instrument.image_url}
+                        alt={instrument.name}
+                        className="w-full h-full object-cover"
+                        referrerPolicy="no-referrer"
+                      />
+                    ) : null}
+                  </div>
+                  <div className="p-6">
+                    <div className="text-[10px] uppercase tracking-widest text-zen-ink/40 mb-2">{instrument.category}</div>
+                    <h3 className="serif text-2xl mb-2">{instrument.name}</h3>
+                    <p className="text-sm text-zen-ink/60 mb-4 leading-relaxed">
+                      {instrument.description || 'No description available.'}
+                    </p>
+                    <div className="flex items-center justify-between text-xs uppercase tracking-[0.2em] text-zen-ink/50">
+                      <span>{instrument.frequency_hz ? `${instrument.frequency_hz} Hz` : 'N/A'}</span>
+                      <span>{instrument.mood || 'Open'}</span>
+                    </div>
+                    {instrument.audio_url ? (
+                      <button
+                        onClick={() => void toggleInstrumentAudio(instrument.audio_url as string, instrument.name)}
+                        className="mt-5 inline-flex items-center gap-2 text-xs uppercase tracking-widest font-bold hover:text-zen-vermilion"
+                      >
+                        <Play size={14} />
+                        {currentAudioUrl === instrument.audio_url ? "Pause Frequency" : "Listen to Frequency"}
+                      </button>
+                    ) : null}
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
         </div>
       </section>
 
